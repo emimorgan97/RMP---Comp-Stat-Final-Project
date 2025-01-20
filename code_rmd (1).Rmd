@@ -1,0 +1,255 @@
+---
+title: "Code used on the project 'Rate My Professors – A Statistical Study' from MATH448/648"
+author: "Taís Vieira, Deidra Lemus, Emilia Morgan"
+date: "2023-05-11"
+output: pdf_document
+---
+
+```{r}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+```
+
+1. Distribution of Student Ratings (Emilia)
+```{r}
+hist(rmp$student_star, main = "Student Star Distributions", xlab = "Student Star Ratings")
+hist(rmp$student_difficult, main = "Student Difficulty Distribution", xlab = "Student Difficulty Ratings")
+
+```
+
+2. Import original data set and clean it (Taís)
+```{r}
+rmp<-read.csv("RateMyProfessor_Sample.csv")
+
+new.rmp<-function(rmp){
+  df<-data.frame()
+  rmp<-rmp[,-c(4,6,9,10,11,12,13,17,18,19,20,21,22,23,24,27,28,29,30)]
+  rmp$name_school<-paste(rmp$professor_name, rmp$school_name, sep = '/')
+  regexp<-'[[:digit:]]+'
+  rmp$name_not_onlines<-str_extract(rmp$name_not_onlines, regexp)
+  names<-unique(rmp$name_school)
+  for (name in names){
+    ind<-grep(name, rmp$name_school)
+    n.review<-length(ind)
+    n.class<-length(unique(rmp$name_not_onlines[ind]))
+    std.star<-sd(rmp$student_star[ind])
+    std.diff<-sd(rmp$student_difficult[ind])
+    new.row1<-rmp[ind[1],c(1:6,10,11)]
+    new.row2<-t(as.data.frame(colMeans(rmp[ind,c(9,12:32)])))
+    new.row<-cbind(new.row1,new.row2,n.review,n.class,std.star,std.diff)
+    df<-rbind(df,new.row)
+  }
+  return(df)
+}
+
+rmp.simple<-new.rmp(rmp)
+rmp.simple<-rmp.simple[complete.cases(rmp.simple),-1] # gets only complete cases and gets rid of professors' names
+rmp.simple<-rmp.simple[which(rmp.simple$n.review>8),] # select only professors with more than 8 reviews
+rmp.simple$gender<-ifelse(rmp.simple$gender=='mostly_female','female',rmp.simple$gender)
+rmp.simple$gender<-ifelse(rmp.simple$gender=='mostly_male','male',rmp.simple$gender)
+rmp.simple$gender<-ifelse(rmp.simple$gender=='andy','unknown',rmp.simple$gender)
+
+# create binary STEM variable based on departments
+departments<-unique(rmp.simple$department_name)
+ind<-c(4,5,6,7,18,29,31,34,43,46)
+stem<-departments[ind]
+non.stem<-departments[-ind]
+rmp.simple$stem<-ifelse(rmp.simple$department_name %in% stem, 1, 0)
+
+write.csv(rmp.simple, 'rmp.simple.csv') # saves new, clean data set
+```
+/
+3.1 Star Rating distribution per Professor (Taís)
+/
+```{r}
+library(fitdistrplus)
+descdist(rmp.simple$star_rating, discrete = F)
+star.df<-as.data.frame(table(rmp.simple$star_rating))
+star.df$Var1<-as.numeric(as.character(star.df$Var1))
+star.df$Freq<-as.numeric(star.df$Freq)
+star.df<-star.df[order(star.df$Var1),] 
+colnames(star.df)<-c('star', 'count')
+
+star.df$star<-(star.df$star-1.0004)/4
+star.df$star<-abs(star.df$star)
+
+star.df$count<-(star.df$count-1.0004)/28.5 # 2 normalized so beta curve fits
+
+library(EnvStats)
+star.scaled<-(rmp.simple$star_rating-1.0004)/4
+star.scaled<-abs(star.scaled)
+param<-ebeta(star.scaled)
+p = seq(0, 1, length=100)
+
+plot(star.df$star,star.df$count, type='h', xlab='Star rating (0-1 normalized)', 
+     ylab='Star rating count (0-2 normalized)', main='Star rating follows a Beta distribution')
+lines(p, dbeta(p, param$parameters[1], param$parameters[2]), lwd=2, col='red')
+```
+/
+3.2 and Linear Model (Taís)
+/
+```{r results='hide'}
+rmp.simple<-readRDS("rmp.simple.rds")
+
+fit<-lm(star_rating~.,rmp.simple)  
+summary(fit) # 0.719
+fit.step<-step(fit, k=log(nrow(rmp.simple)))
+```
+
+```{r}
+summary(fit.step) # 0.341 
+plot(fit.step)
+```
+/
+4. Star Rating Trends Over Time (Emilia)
+/
+```{r}
+library('dplyr')
+library('corrr')
+library("data.table")
+library('tidyverse')
+
+x <- c()
+date_plot <-function(x){
+  rmp.1 <- rmp %>% filter(professor_name == rmpnew$professor_name[x])
+  rmp.1$post_date <- format(as.Date(rmp.1$post_date, "%m/%d/%Y"))
+  rmp.1 <- rmp.1[rev(order(as.Date(rmp.1$post_date, format="%m/%d/%Y"))),]
+  sd <- sd(rmp.1$student_star)
+  x <- nrow(rmp.1)
+  y <- rep(1:x)
+  rmp.1 <- rmp.1 %>% mutate(order_date=y)
+  z <- summary(lm(rmp.1$order_date ~rmp.1$student_star))
+  if (is.na(sd) != TRUE & sd != 0 & x > 7){
+  print(z$coefficients[2,4])
+  }
+}
+
+x<- c()
+for (i in 1:1413){
+  x <- append(x, date_plot(i))
+}
+
+#print(x)
+
+#lm(rmp.1$order_date ~rmp.1$student_star)
+
+#date_plot(1)
+x <- na.omit(x)
+
+hist(x, main = "Histogram of P-Values for Slope")
+
+xbar <- mean(x)
+n <- length(x)
+s <- sd(x)
+q <- (xbar - .0025)/(s/sqrt(n))
+
+2*pnorm(q, lower.tail=FALSE)
+
+date_plot1 <-function(x){
+  rmp.1 <- rmp %>% filter(professor_name == rmpnew$professor_name[x])
+  rmp.1$post_date <- format(as.Date(rmp.1$post_date, "%m/%d/%Y"))
+  rmp.1 <- rmp.1[rev(order(as.Date(rmp.1$post_date, format="%m/%d/%Y"))),]
+  sd <- sd(rmp.1$student_star)
+  x <- nrow(rmp.1)
+  y <- rep(1:x)
+  rmp.1 <- rmp.1 %>% mutate(order_date=y)
+  z <- summary(lm(rmp.1$order_date ~rmp.1$student_star))
+  if (is.na(sd) != TRUE & sd != 0 & x > 7){
+    print(z$coefficients[2])
+  }
+}
+
+y<- c()
+for (i in 1:1413){
+  y <- append(y, date_plot1(i))
+}
+
+hist(y, main = "Histogram of Slope Coefficients")
+y <- na.omit(y)
+
+ybar <- mean(y)
+ny <- length(y)
+sy <- sd(y)
+qy <- (ybar)/(sy/sqrt(ny))
+
+2*pnorm(abs(qy), lower.tail=FALSE)
+```
+/
+5. Effect of race and gender on professor’s tags (Deidra)
+/
+```{r}
+
+```
+/
+6. Effect of race and gender on professor’s ratings (Taís)
+/
+```{r}
+ggplot(rmp.filter, aes(race, fill=gender)) + geom_bar() 
++ ggtitle('Race and gender distribution among professors')
+stem.aov<-aov(star_rating~race*gender, rmp.simple)
+summary(stem.aov)
+```
+/
+7. STEM vs non-STEM (Taís)
+/
+```{r}
+# testing the star rating difference
+stem.rate<-rmp.simple[which(rmp.simple$stem==1),4]
+non.stem.rate<-rmp.simple[which(rmp.simple$stem==0),4]
+stem.test<-t.test(stem.rate, non.stem.rate)
+
+# testing the difference in star rating according to gender 
+stem.male.rate<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$gender=='male'),4]
+stem.female.rate<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$gender=='female'),4]
+stem.gender.test<-t.test(stem.male.rate, stem.female.rate)
+
+# testing correlation between gender and STEM
+stem.dist<-rmp.simple$stem
+gender.dist<-rmp.simple$gender
+gender.dist<-gsub('female',1,gender.dist)
+gender.dist<-gsub('male',0,gender.dist)
+gender.dist<-gsub('unknown',2,gender.dist)
+gender.dist<-as.numeric(gender.dist)
+cor(stem.dist, gender.dist) # low correlation                 
+
+# testing relationship between star rating, gender and STEM
+library(ggplot2)
+rmp.filter<-rmp.simple[which(rmp.simple$gender!='unknown'),]
+rmp.filter$stem<-as.factor(rmp.filter$stem)
+ggplot(rmp.filter, aes(gender, fill=stem)) + geom_bar()
+fem.stem<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$gender=='female'),4]
+male.stem<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$gender=='male'),4]
+stem.gender.test<-t.test(fem.stem, male.stem)
+
+# check difference in star rating according to race
+hisp.dist<-rmp.simple[which(rmp.simple$race=="hispanic"),4]
+black.dist<-rmp.simple[which(rmp.simple$race=="nh_black"),4]
+white.dist<-rmp.simple[which(rmp.simple$race=="nh_white"),4]
+race.test<-t.test(hisp.dist, white.dist)
+
+# check race and gender proportion in STEM
+hisp.stem<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$race=='hispanic'),4]
+black.stem<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$race=='nh_black'),4]
+white.stem<-rmp.simple[which(rmp.simple$stem==1 & rmp.simple$race=='nh_white'),4]
+
+fem.rate<-rmp.simple[which(rmp.simple$gender=='female'),4]
+male.rate<-rmp.simple[which(rmp.simple$gender=='male'),4]
+
+n.obs<-nrow(rmp.simple)
+n.stem<-length(which(rmp.simple$stem==1))
+prop.stem.f<-prop.test(x=c(length(fem.stem),n.stem), n=c(length(fem.rate),n.obs))
+prop.stem.m<-prop.test(x=c(length(male.stem),n.stem), n=c(length(male.rate),n.obs))
+prop.stem.wh<-prop.test(x=c(length(white.stem),n.stem), n=c(length(white.dist),n.obs))
+prop.stem.b<-prop.test(x=c(length(black.stem),n.stem), n=c(length(black.dist),n.obs))
+prop.stem.h<-prop.test(x=c(length(hisp.stem),n.stem), n=c(length(hisp.dist),n.obs))
+
+# plot race and gender distribution in STEM
+ggplot(rmp.filter, aes(stem, fill=race)) + geom_bar()
+```
+/
+7. STEM vs non-STEM (Deidra)
+/
+```{r}
+
+```
